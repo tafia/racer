@@ -33,23 +33,24 @@ fn search_struct_fields<'a>(searchstr: &'a str, structmatch: &'a Match, search_t
         }))
 }
 
-pub fn search_for_impl_methods(implsearchstr: &str,
-                              fieldsearchstr: &str, point: usize,
-                              fpath: &Path, local: bool,
-                              search_type: SearchType) -> vec::IntoIter<Match> {
+pub fn search_for_impl_methods<'a>(implsearchstr: &'a str, fieldsearchstr: &'a str, 
+                                   point: usize, fpath: &'a Path, local: bool,
+                                   search_type: SearchType) -> Box<Iterator<Item=Match> + 'a> {
 
-    debug!("searching for impl methods |{}| |{}| {:?}", implsearchstr, fieldsearchstr, fpath.to_str());
+    debug!("searching for impl methods |{}| |{}| {:?}", 
+           implsearchstr, fieldsearchstr, fpath.to_str());
 
-    search_for_impls(point, implsearchstr, fpath, local, true).flat_map(|m| {
-        debug!("found impl!! |{:?}| looking for methods", m);
-        let src = racer::load_file(&m.filepath);
+    Box::new(search_for_impls(point, implsearchstr, fpath, local, true)
+        .flat_map(move |m| {
+            debug!("found impl!! |{:?}| looking for methods", m);
+            let src = racer::load_file(&m.filepath);
 
-        // find the opening brace and skip to it.
-        (&src[m.point..]).find('{').map_or(Vec::new().into_iter(), |n| {
-            let point = m.point + n + 1;
-            search_scope_for_methods(point, &*src, fieldsearchstr, &m.filepath, search_type)
-        })
-    }).collect::<Vec<_>>().into_iter()
+            // find the opening brace and skip to it.
+            (&src[m.point..]).find('{').map_or(Vec::new().into_iter(), |n| {
+                let point = m.point + n + 1;
+                search_scope_for_methods(point, &*src, fieldsearchstr, &m.filepath, search_type)
+            })
+    }))
 }
 
 fn search_scope_for_methods(point: usize, src:&str, searchstr:&str, filepath:&Path,
@@ -881,7 +882,7 @@ pub fn search_for_field_or_method(context: Match, searchstr: &str, search_type: 
                                     m.point,
                                     &m.filepath,
                                     m.local,
-                                    search_type)
+                                    search_type).collect::<Vec<_>>().into_iter()
         },
         Trait => {
             debug!("got a trait, looking for methods {}", m.matchstr);
