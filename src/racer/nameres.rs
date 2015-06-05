@@ -15,18 +15,22 @@ pub const PATH_SEP: &'static str = ":";
 #[cfg(windows)]
 pub const PATH_SEP: &'static str = ";";
 
-fn search_struct_fields(searchstr: &str, structmatch: &Match,
-                        search_type: SearchType) -> vec::IntoIter<Match> {
+fn search_struct_fields<'a>(searchstr: &'a str, structmatch: &'a Match, search_type: SearchType)
+        -> Box<Iterator<Item=Match> + 'a> {
+
     let src = racer::load_file(&structmatch.filepath);
     let opoint = scopes::find_stmt_start(&*src, structmatch.point).unwrap();
     let structsrc = scopes::end_of_next_scope(&src[opoint..]);
 
-    ast::parse_struct_fields(structsrc.to_string(), racer::Scope::from_match(structmatch))
-    .into_iter().filter_map(|(ref field, fpos, _)| 
+    Box::new(ast::parse_struct_fields(structsrc.to_string(), 
+             racer::Scope::from_match(structmatch))
+    .into_iter().filter_map(move |(ref field, fpos, _)| 
         if symbol_matches(search_type, searchstr, &field) {
             Some(Match::new(field, &structmatch.filepath, fpos + opoint, 
                             structmatch.local, StructField, field))
-        } else { None }).collect::<Vec<_>>().into_iter()
+        } else { 
+            None 
+        }))
 }
 
 pub fn search_for_impl_methods(implsearchstr: &str,
