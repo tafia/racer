@@ -42,7 +42,7 @@ pub fn search_for_impl_methods<'a>(m: &'a Match, fieldsearchstr: &'a str,
     debug!("searching for impl methods |{}| |{}| {:?}", 
            m.matchstr, fieldsearchstr, m.filepath.to_str());
 
-    Box::new(search_for_impls(m, true)
+    Box::new(ImplIter::new(m, true)
         .filter_map(move |m| search_scope_for_methods(&m, fieldsearchstr, search_type))
         .flat_map(|ms| ms.into_iter()))
 }
@@ -86,50 +86,91 @@ fn search_scope_for_methods(m: &Match, searchstr:&str, search_type: SearchType)
     })
 }
 
-// fn search_for_impls(pos: usize, searchstr: &str, filepath: &Path, local: bool, 
-fn search_for_impls(m: &Match, include_traits: bool) -> vec::IntoIter<Match> {
+struct ImplIter<'a> {
+    m: &'a Match,
+    iter: codeiter::StmtIndicesIter<'a>,
+    state: u8,
+    include_traits: bool,
+    trait_path: Option<racer::Path>,
+    start: usize
+}
 
-    debug!("search_for_impls {}, {}, {:?}", m.point, m.matchstr, m.filepath.to_str());
+impl<'a> ImplIter<'a> {
+    fn new(m: &'a Match, include_traits:bool) -> ImplIter<'a> {
+        let iter = codeiter::iter_stmts(&m.src[m.point..]);
+        ImplIter { 
+            m:m, 
+            iter: iter, 
+            state: 0, 
+            include_traits: include_traits, 
+            trait_path: None,
+            start: 0
+        }
+    }
+}
 
-    let src = &m.src[m.point..];
-    codeiter::iter_stmts(src).filter_map(|(start, end)| {
-        let blob = &src[start..end];
+impl<'a> Iterator for ImplIter<'a> {
+    type Item=Match;
 
-        if blob.starts_with("impl") {
-            blob.find('{').map(|n| {
-                let mut out = Vec::with_capacity(2); // maximum 2 items
-                let mut decl = (&blob[..n+1]).to_string();
-                decl.push('}');
-                if txt_matches(ExactMatch, &m.matchstr, &decl) {
-                    debug!("impl decl {}", decl);
-                    let implres = ast::parse_impl(decl);
+    fn next(&mut self) -> Option<Match> {
 
-                    implres.name_path.map(|name_path| {
-                        name_path.segments.last().map(|name| {
-                            let mut m = m.clone();
-                            m.matchstr = name.name.clone();
-                            m.point += start + 5;
-                            m.mtype = Impl;
-                            m.contextstr = "".to_string();
-                            out.push(m);
-                        })
-                    });
+        loop {
 
-                    // find trait
-                    if include_traits && implres.trait_path.is_some() {
-                        let trait_path = implres.trait_path.unwrap();
-                        let m = resolve_path(&trait_path, &*m.filepath, 
-                                             m.point + start, ExactMatch, TypeNamespace).next();
-                        debug!("found trait |{:?}| {:?}", trait_path, m);
-                        m.map(|m| out.push(m));
+            match self.state {
+                // must iterate on code
+                0 => {
+                    if let Some((start, end)) = self.iter.next() {
+                        let blob = &self.m.src[start+self.m.point..end+self.m.point];
+                        if blob.starts_with("impl") {
+                            if let Some(n) = blob.find('{') {
+                                let mut decl = (&blob[..n+1]).to_string();
+                                decl.push('}');
+                                if txt_matches(ExactMatch, &self.m.matchstr, &decl) {
+
+                                    debug!("impl decl {}", decl);
+                                    let implres = ast::parse_impl(decl);
+
+                                    if self.include_traits { 
+                                        self.trait_path = implres.trait_path; 
+                                        self.start = start;
+                                        self.state = 1;
+                                    }
+
+                                    if let Some(name_path) = implres.name_path {
+                                        if let Some(name) = name_path.segments.last() {
+                                            let mut m = self.m.clone();
+                                            m.matchstr = name.name.clone();
+                                            m.point += start + 5;
+                                            m.mtype = Impl;
+                                            m.contextstr = "".to_string();
+                                            return Some(m);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else { self.state = 2; }
+                }
+                // must try for traits
+                1 => {
+                    self.state = 0;
+                    if self.include_traits {
+                        if let Some(ref trait_path) = self.trait_path {
+                            let m = resolve_path(&trait_path, &*self.m.filepath, 
+                                                 self.m.point + self.start, ExactMatch, 
+                                                 TypeNamespace).next();
+                            if m.is_some() { 
+                                debug!("found trait |{:?}| {:?}", trait_path, m);
+                                return m;
+                            }
+                        }
                     }
                 }
-                out
-            })
-        } else {
-            None
+                // finished
+                _ => return None,
+            }
         }
-    }).flat_map(|v| v.into_iter()).collect::<Vec<_>>().into_iter()
+    }
 }
 
 // scope headers include fn decls, if let, while let etc..
@@ -804,7 +845,7 @@ pub fn resolve_path(path: &racer::Path, filepath: &Path, pos: usize,
                             }
                             Struct => {
                                 debug!("found a struct. Now need to look for impl");
-                                search_for_impls(&m, false).flat_map(|m| {
+                                ImplIter::new(&m, false).flat_map(|m| {
                                     debug!("found impl!! {:?}", m);
                                     let src = racer::load_file(&m.filepath);
                                     // find the opening brace and skip to it.
@@ -859,7 +900,7 @@ pub fn do_external_search(path: &[&str], filepath: &Path, pos: usize,
                 }
                 Struct => {
                     debug!("found a pub struct. Now need to look for impl");
-                    search_for_impls(&m, false)
+                    ImplIter::new(&m, false)
                     .flat_map(|m| {
                         debug!("found  impl2!! {}", m.matchstr);
                         let searchstr = path[path.len()-1];
