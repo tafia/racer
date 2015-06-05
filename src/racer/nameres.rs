@@ -42,14 +42,13 @@ pub fn search_for_impl_methods<'a>(m: &'a Match, fieldsearchstr: &'a str,
     debug!("searching for impl methods |{}| |{}| {:?}", 
            m.matchstr, fieldsearchstr, m.filepath.to_str());
 
-    Box::new(search_for_impls(m.point, &m.matchstr, &m.filepath, m.local, true)
+    Box::new(search_for_impls(m, true)
         .filter_map(move |m| search_scope_for_methods(&m, fieldsearchstr, search_type))
         .flat_map(|ms| ms.into_iter()))
 }
 
 fn search_scope_for_methods(m: &Match, searchstr:&str, search_type: SearchType)     
-        -> Option<Vec<Match>> 
-        {
+        -> Option<Vec<Match>> {
 
     m.src[m.point..].find('{').map(move |n| {
         let point = m.point + n + 1;
@@ -80,10 +79,6 @@ fn search_scope_for_methods(m: &Match, searchstr:&str, search_type: SearchType)
                     m.contextstr = blob[..n -1].to_owned();
                     m
                 })
-                // blob.find('{').map(|n| Match::new(l, &m.filepath, point + blobstart + start, 
-                //                                        true, Function, &blob[..n -1]))
-
-
             } else {
                 None
             }
@@ -91,44 +86,50 @@ fn search_scope_for_methods(m: &Match, searchstr:&str, search_type: SearchType)
     })
 }
 
-pub fn search_for_impls(pos: usize, searchstr: &str, filepath: &Path, local: bool, 
-                        include_traits: bool) -> vec::IntoIter<Match> {
-    debug!("search_for_impls {}, {}, {:?}", pos, searchstr, filepath.to_str());
-    let s = racer::load_file(filepath);
-    let src = &s[pos..];
+// fn search_for_impls(pos: usize, searchstr: &str, filepath: &Path, local: bool, 
+fn search_for_impls(m: &Match, include_traits: bool) -> vec::IntoIter<Match> {
 
-    let mut out = Vec::new();
-    for (start, end) in codeiter::iter_stmts(src) {
+    debug!("search_for_impls {}, {}, {:?}", m.point, m.matchstr, m.filepath.to_str());
+
+    let src = &m.src[m.point..];
+    codeiter::iter_stmts(src).filter_map(|(start, end)| {
         let blob = &src[start..end];
 
         if blob.starts_with("impl") {
             blob.find('{').map(|n| {
+                let mut out = Vec::with_capacity(2); // maximum 2 items
                 let mut decl = (&blob[..n+1]).to_string();
                 decl.push('}');
-                if txt_matches(ExactMatch, searchstr, &decl) {
+                if txt_matches(ExactMatch, &m.matchstr, &decl) {
                     debug!("impl decl {}", decl);
                     let implres = ast::parse_impl(decl);
 
                     implres.name_path.map(|name_path| {
                         name_path.segments.last().map(|name| {
-                            out.push(Match::new(name.name.clone(), filepath, 
-                                                pos + start + 5, local, Impl, ""));
-                        });
+                            let mut m = m.clone();
+                            m.matchstr = name.name.clone();
+                            m.point += start + 5;
+                            m.mtype = Impl;
+                            m.contextstr = "".to_string();
+                            out.push(m);
+                        })
                     });
 
                     // find trait
                     if include_traits && implres.trait_path.is_some() {
                         let trait_path = implres.trait_path.unwrap();
-                        let m = resolve_path(&trait_path, filepath, 
-                                             pos + start, ExactMatch, TypeNamespace).next();
+                        let m = resolve_path(&trait_path, &*m.filepath, 
+                                             m.point + start, ExactMatch, TypeNamespace).next();
                         debug!("found trait |{:?}| {:?}", trait_path, m);
                         m.map(|m| out.push(m));
                     }
                 }
-            });
+                out
+            })
+        } else {
+            None
         }
-    }
-    out.into_iter()
+    }).flat_map(|v| v.into_iter()).collect::<Vec<_>>().into_iter()
 }
 
 // scope headers include fn decls, if let, while let etc..
@@ -803,8 +804,7 @@ pub fn resolve_path(path: &racer::Path, filepath: &Path, pos: usize,
                             }
                             Struct => {
                                 debug!("found a struct. Now need to look for impl");
-                                search_for_impls(m.point, &m.matchstr, &m.filepath, 
-                                                 m.local, false).flat_map(|m| {
+                                search_for_impls(&m, false).flat_map(|m| {
                                     debug!("found impl!! {:?}", m);
                                     let src = racer::load_file(&m.filepath);
                                     // find the opening brace and skip to it.
@@ -859,7 +859,7 @@ pub fn do_external_search(path: &[&str], filepath: &Path, pos: usize,
                 }
                 Struct => {
                     debug!("found a pub struct. Now need to look for impl");
-                    search_for_impls(m.point, &m.matchstr, &m.filepath, m.local, false)
+                    search_for_impls(&m, false)
                     .flat_map(|m| {
                         debug!("found  impl2!! {}", m.matchstr);
                         let searchstr = path[path.len()-1];
