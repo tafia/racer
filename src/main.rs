@@ -21,7 +21,7 @@ pub mod racer;
 
 #[cfg(not(test))]
 fn match_with_snippet_fn(m: Match) {
-    let (linenum, charnum) = scopes::point_to_coords_from_file(&m.filepath, m.point).unwrap();
+    let (linenum, charnum) = scopes::point_to_coords_from_file(&**m.src, m.point).unwrap();
     if m.matchstr == "" {
         panic!("MATCHSTR is empty - waddup?");
     }
@@ -39,7 +39,7 @@ fn match_with_snippet_fn(m: Match) {
 
 #[cfg(not(test))]
 fn match_fn(m: Match) {
-    let (linenum, charnum) = scopes::point_to_coords_from_file(&m.filepath, m.point).unwrap();
+    let (linenum, charnum) = scopes::point_to_coords_from_file(&**m.src, m.point).unwrap();
     if m.matchstr == "" {
         panic!("MATCHSTR is empty - waddup?");
     }

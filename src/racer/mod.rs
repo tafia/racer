@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::{str, vec, fmt};
 use std::path;
+use std::rc::Rc;
 
 pub mod scopes;
 pub mod ast;
@@ -60,7 +61,8 @@ pub enum CompletionType {
 #[derive(Clone)]
 pub struct Match {
     pub matchstr: String,
-    pub filepath: path::PathBuf,
+    pub filepath: Rc<path::PathBuf>,
+    pub src: Rc<Box<String>>,  // loaded code source, several Matches in the same file
     pub point: usize,
     pub local: bool,
     pub mtype: MatchType,
@@ -72,14 +74,17 @@ pub struct Match {
 impl Match {
 
     fn new<SM, SC, P>(matchstr: SM, path: P, point: usize, local: bool, 
-                 mtype: MatchType, context: SC) -> Match 
+                      mtype: MatchType, context: SC) -> Match 
         where SM: Into<String>,
               SC: Into<String>,
               P: Into<path::PathBuf> 
     {
+        let path = path.into();
+        let src = Rc::new(Box::new(load_file(&path)));
         Match {
             matchstr: matchstr.into(),
-            filepath: path.into(),
+            filepath: Rc::new(path),
+            src: src,
             point: point,
             local: local,
             mtype: mtype,
@@ -90,16 +95,9 @@ impl Match {
     }
 
     fn with_generic_types(&self, generic_types: Vec<PathSearch>) -> Match {
-        Match {
-            matchstr: self.matchstr.clone(),
-            filepath: self.filepath.clone(),
-            point: self.point,
-            local: self.local,
-            mtype: self.mtype,
-            contextstr: self.contextstr.clone(),
-            generic_args: self.generic_args.clone(),
-            generic_types: generic_types
-        }
+        let mut m = self.clone();
+        m.generic_types = generic_types;
+        m
     }
 }
 
@@ -119,11 +117,15 @@ impl fmt::Debug for Match {
 
 #[derive(Clone)]
 pub struct Scope {
-    pub filepath: path::PathBuf,
+    pub filepath: Rc<path::PathBuf>,
     pub point: usize
 }
 
 impl Scope {
+    pub fn new<P: Into<path::PathBuf>>(path: P, point: usize) -> Scope {
+        Scope { filepath: Rc::new(path.into()), point: point }
+    }
+
     pub fn from_match(m: &Match) -> Scope {
         Scope{ filepath: m.filepath.clone(), point: m.point }
     }

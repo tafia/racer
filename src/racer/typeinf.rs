@@ -53,15 +53,12 @@ fn get_type_of_self_arg(m: &Match, msrc: &str) -> Option<racer::Ty> {
         } else {
             // // must be a trait
             return ast::parse_trait(decl).name.and_then(|name| {
-                Some(racer::Ty::TyMatch(Match {
-                           matchstr: name,
-                           filepath: m.filepath.clone(),
-                           point: start,
-                           local: m.local,
-                           mtype: racer::MatchType::Trait,
-                           contextstr: racer::matchers::first_line(&msrc[start..]),
-                           generic_args: Vec::new(), generic_types: Vec::new()
-                }))
+                let mut m = m.clone();
+                m.matchstr = name;
+                m.point = start;
+                m.mtype = racer::MatchType::Trait;
+                m.contextstr = racer::matchers::first_line(&msrc[start..]);
+                Some(racer::Ty::TyMatch(m))
             });
         }
     });

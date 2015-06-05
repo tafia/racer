@@ -234,16 +234,9 @@ pub fn match_struct(msrc: &str, blobstart: usize, blobend: usize,
             .expect("Can't find end of struct header");
         // structs with no values need to end in ';', not '{}'
         let generics = ast::parse_generics(format!("{};", &blob[..end]));
-        Some(Match {
-            matchstr: l.to_owned(),
-            filepath: filepath.to_owned(),
-            point: blobstart + start,
-            local: local,
-            mtype: Struct,
-            contextstr: first_line(blob),
-            generic_args: generics.generic_args,
-            generic_types: Vec::new()
-        })        
+        let mut m = Match::new(l, filepath, blobstart + start, local, Struct, first_line(blob));
+        m.generic_args = generics.generic_args;
+        Some(m)
     } else {
         None
     }
@@ -316,16 +309,9 @@ pub fn match_enum(msrc: &str, blobstart: usize, blobend: usize,
         let end = blob.find('{').or(blob.find(';'))
             .expect("Can't find end of enum header");
         let generics = ast::parse_generics(format!("{}{{}}", &blob[..end]));
-        Some(Match {
-            matchstr: l.to_owned(),
-            filepath: filepath.to_owned(),
-            point: blobstart + start,
-            local: local,
-            mtype: Enum,
-            contextstr: first_line(blob),
-            generic_args: generics.generic_args,
-            generic_types: Vec::new()
-        })
+        let mut m = Match::new(l, filepath, blobstart + start, local, Enum, first_line(blob));
+        m.generic_args = generics.generic_args;
+        Some(m)
     } else {
         None
     }

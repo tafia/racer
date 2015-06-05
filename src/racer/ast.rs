@@ -437,11 +437,8 @@ impl<'v> visit::Visitor<'v> for ExprTypeVisitor {
                     match contextm {
                         &TyMatch(ref contextm) => {
                             let omethod = nameres::search_for_impl_methods(
-                                &contextm.matchstr,
+                                &contextm,
                                 &methodname,
-                                contextm.point,
-                                &contextm.filepath,
-                                contextm.local,
                                 racer::SearchType::ExactMatch).nth(0);
                             omethod
                                 .and_then(|method|
@@ -869,11 +866,7 @@ pub fn parse_enum(s: String) -> EnumVisitor {
 }
 
 pub fn get_type_of(exprstr: String, fpath: &Path, pos: usize) -> Option<Ty> {
-    let myfpath = fpath.clone();
-    let startscope = Scope {
-        filepath: myfpath.to_path_buf(),
-        point: pos
-    };
+    let startscope = Scope::new(fpath.to_path_buf(), pos);
 
     let mut v = ExprTypeVisitor{ scope: startscope, result: None };
 

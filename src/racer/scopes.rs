@@ -1,9 +1,10 @@
 use racer::{self, ast, codecleaner, codeiter, typeinf, util};
 
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+// use std::fs::File;
+use std::io::{BufRead};
+// use std::io::{BufRead, BufReader};
 use std::iter::Iterator;
-use std::path::Path;
+// use std::path::Path;
 use std::str::from_utf8;
 use racer::util::char_at;
 
@@ -289,12 +290,19 @@ pub fn point_to_coords(src: &str, point: usize) -> (usize, usize) {
     (nlines, point - linestart)
 }
 
-pub fn point_to_coords_from_file(path: &Path, point: usize) -> Option<(usize, usize)> {
+pub fn point_to_coords_from_file(src: &str, point: usize) -> Option<(usize, usize)> {
     let mut lineno = 0;
-    let reader = BufReader::new(File::open(path).unwrap());
     let mut p = 0;
-    for line_r in reader.lines() {
-        let line = line_r.unwrap();
+    // let reader = BufReader::new(File::open(path).unwrap());
+    // for line_r in reader.lines() {
+    //     let line = line_r.unwrap();
+    //     lineno += 1;
+    //     if point < (p + line.len()) {
+    //         return Some((lineno, point - p));
+    //     }
+    //     p += line.len() + 1;  // +1 for the newline char
+    // }
+    for line in src.lines() {
         lineno += 1;
         if point < (p + line.len()) {
             return Some((lineno, point - p));
