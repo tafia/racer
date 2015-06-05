@@ -26,8 +26,8 @@ fn search_struct_fields<'a>(searchstr: &'a str, structmatch: &'a Match, search_t
              racer::Scope::from_match(structmatch))
     .into_iter().filter_map(move |(ref field, fpos, _)| 
         if symbol_matches(search_type, searchstr, &field) {
-            Some(Match::new(field, &structmatch.filepath, fpos + opoint, 
-                            structmatch.local, StructField, field))
+            Some(Match::new(field.to_string(), &structmatch.filepath, fpos + opoint, 
+                            structmatch.local, StructField, field.to_string()))
         } else { 
             None 
         }))
@@ -41,44 +41,43 @@ pub fn search_for_impl_methods<'a>(implsearchstr: &'a str, fieldsearchstr: &'a s
            implsearchstr, fieldsearchstr, fpath.to_str());
 
     Box::new(search_for_impls(point, implsearchstr, fpath, local, true)
-        .flat_map(move |m| {
-            debug!("found impl!! |{:?}| looking for methods", m);
-            let src = racer::load_file(&m.filepath);
-
-            // find the opening brace and skip to it.
-            (&src[m.point..]).find('{').map_or(Vec::new().into_iter(), |n| {
-                let point = m.point + n + 1;
-                search_scope_for_methods(point, &*src, fieldsearchstr, &m.filepath, search_type)
-            })
-    }))
+        .filter_map(move |m| search_scope_for_methods(m, fieldsearchstr, search_type))
+        .flat_map(|ms| ms.into_iter()))
 }
 
-fn search_scope_for_methods(point: usize, src:&str, searchstr:&str, filepath:&Path,
-                      search_type: SearchType) -> vec::IntoIter<Match> {
-    debug!("searching scope for methods {} |{}| {:?}", point, searchstr, filepath.to_str());
+fn search_scope_for_methods(m: Match, searchstr:&str, search_type: SearchType)     
+        -> Option<Vec<Match>> 
+        {
 
-    let scopesrc = &src[point..];
-    let mut out = Vec::new();
-    for (blobstart,blobend) in codeiter::iter_stmts(scopesrc) {
-        let blob = &scopesrc[blobstart..blobend];
+    let src = racer::load_file(&m.filepath);
+    src[m.point..].find('{').map(move |n| {
+        let point = m.point + n + 1;
+        debug!("searching scope for methods {} |{}| {:?}", point, searchstr, m.filepath);
+        let src = &src[point..];
+        codeiter::iter_stmts(src).filter_map(move |(blobstart,blobend)| {
 
-        if txt_matches(search_type, &format!("fn {}", searchstr), blob)
-            && typeinf::first_param_is_self(blob) {
-            debug!("found a method starting |{}| |{}|", searchstr, blob);
-            // TODO: parse this properly
-            let start = blob.find(&format!("fn {}", searchstr)).unwrap() + 3;
-            let end = find_ident_end(blob, start);
-            let l = &blob[start..end];
-            // TODO: make a better context string for functions
-            blob.find('{').map(|n| { // only matches if is a method implementation
-                out.push(Match::new(l, filepath, point + blobstart + start, 
-                                    true, Function, &blob[..n -1]));
-            });
-        }
-    }
-    out.into_iter()
+            let blob = &src[blobstart..blobend];
+            let searchfn = format!("fn {}", searchstr);
+            if txt_matches(search_type, &searchfn, blob)
+                && typeinf::first_param_is_self(blob) {
+
+                debug!("found a method starting |{}| |{}|", searchstr, blob);
+
+                // TODO: parse this properly
+                let start = blob.find(&searchfn).unwrap() + 3;
+                let end = find_ident_end(blob, start);
+                let l = &blob[start..end];
+
+                // TODO: make a better context string for functions
+                // only matches if is a method implementation
+                blob.find('{').map(|n| Match::new(l, &m.filepath, point + blobstart + start, 
+                                                       true, Function, &blob[..n -1]))
+            } else {
+                None
+            }
+        }).collect() // couldn't make it work with Box ... lifetimes issues
+    })
 }
-
 
 pub fn search_for_impls(pos: usize, searchstr: &str, filepath: &Path, local: bool, 
                         include_traits: bool) -> vec::IntoIter<Match> {
@@ -100,7 +99,7 @@ pub fn search_for_impls(pos: usize, searchstr: &str, filepath: &Path, local: boo
 
                     implres.name_path.map(|name_path| {
                         name_path.segments.last().map(|name| {
-                            out.push(Match::new(&name.name.clone(), filepath, 
+                            out.push(Match::new(name.name.clone(), filepath, 
                                                 pos + start + 5, local, Impl, ""));
                         });
                     });
@@ -886,11 +885,8 @@ pub fn search_for_field_or_method(context: Match, searchstr: &str, search_type: 
         },
         Trait => {
             debug!("got a trait, looking for methods {}", m.matchstr);
-            let src = racer::load_file(&m.filepath);
-            (&src[m.point..]).find('{').map_or(Vec::new().into_iter(), |n| {
-                let point = m.point + n + 1;
-                search_scope_for_methods(point, &*src, searchstr, &m.filepath, search_type)
-            })
+            search_scope_for_methods(m, searchstr, search_type)
+            .map_or(Vec::new(), |m| m).into_iter()
         }
         _ => { 
             debug!("WARN!! context wasn't a Struct, Enum or Trait {:?}",m);

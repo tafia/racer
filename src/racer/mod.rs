@@ -71,15 +71,19 @@ pub struct Match {
 
 impl Match {
 
-    fn new<P: Into<path::PathBuf>>(matchstr: &str, path: P, point: usize, local: bool, 
-                                   mtype: MatchType, context: &str) -> Match {
+    fn new<SM, SC, P>(matchstr: SM, path: P, point: usize, local: bool, 
+                 mtype: MatchType, context: SC) -> Match 
+        where SM: Into<String>,
+              SC: Into<String>,
+              P: Into<path::PathBuf> 
+    {
         Match {
-            matchstr: matchstr.to_owned(),
+            matchstr: matchstr.into(),
             filepath: path.into(),
             point: point,
             local: local,
             mtype: mtype,
-            contextstr: context.to_owned(),
+            contextstr: context.into(),
             generic_args: Vec::new(),
             generic_types: Vec::new()
         }

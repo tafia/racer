@@ -79,8 +79,8 @@ fn match_pattern_start(src: &str, blobstart: usize, blobend: usize,
     let blob = &src[blobstart..blobend];
     if let Some(start) = find_keyword(blob, pattern, searchstr, search_type, local) {
         if let Some(end) = blob[start..].find(':') {
-            let s = &blob[start..start+end].trim_right();
-            return Some(Match::new(s, filepath, blobstart+start, local, mtype, &first_line(blob)));
+            let s = blob[start..start+end].trim_right();
+            return Some(Match::new(s, filepath, blobstart+start, local, mtype, first_line(blob)));
         }
     }
     None
@@ -112,7 +112,7 @@ fn match_pattern_let(msrc: &str, blobstart: usize, blobend: usize,
             if symbol_matches(search_type, searchstr, s) {
                 debug!("match_pattern_let point is {}", blobstart + start);
                 out.push(Match::new(s, filepath, blobstart + start, local, 
-                                    mtype, &first_line(blob)));
+                                    mtype, first_line(blob)));
                 if let ExactMatch = search_type {
                     break;
                 }
@@ -176,8 +176,8 @@ pub fn match_extern_crate(msrc: &str, blobstart: usize, blobend: usize,
                 } else {
                     name
                 };
-            get_crate_file(&realname, filepath).map(|ref cratepath| {
-                res = Some(Match::new(name, cratepath, 0, false, Module, cratepath.to_str().unwrap()));
+            get_crate_file(realname, filepath).map(|ref cratepath| {
+                res = Some(Match::new(name.to_owned(), cratepath, 0, false, Module, cratepath.to_str().unwrap()));
             });
         }
     }
@@ -259,7 +259,7 @@ pub fn match_type(msrc: &str, blobstart: usize, blobend: usize,
             StartsWith => &blob[start..find_ident_end(blob, start+searchstr.len())]
         };
         debug!("found!! a type {}", l);
-        Some(Match::new(l, filepath, blobstart + start, local, Type, &first_line(blob)))
+        Some(Match::new(l, filepath, blobstart + start, local, Type, first_line(blob)))
     } else {
         None
     }
@@ -275,7 +275,7 @@ pub fn match_trait(msrc: &str, blobstart: usize, blobend: usize,
             StartsWith => &blob[start..find_ident_end(blob, start+searchstr.len())]
         };
         debug!("found!! a trait {}", l);
-        Some(Match::new(l, filepath, blobstart + start, local, Trait, &first_line(blob)))
+        Some(Match::new(l, filepath, blobstart + start, local, Trait, first_line(blob)))
     } else {
         None
     }
@@ -293,8 +293,8 @@ pub fn match_enum_variants(msrc: &str, blobstart: usize, blobend: usize,
 
             for (name, offset) in parsed_enum.values.into_iter() {
                 if (&name).starts_with(searchstr) {
-                    out.push(Match::new(&name, filepath, blobstart + offset, local, 
-                                        EnumVariant, &first_line(&blob[offset..])));
+                    out.push(Match::new(name, filepath, blobstart + offset, local, 
+                                        EnumVariant, first_line(&blob[offset..])));
                 }
             }
         }
@@ -442,7 +442,7 @@ pub fn match_fn(msrc: &str, blobstart: usize, blobend: usize,
                 StartsWith => &blob[start..find_ident_end(blob, start+searchstr.len())]
             };
             debug!("found a fn {}", l);
-            Some(Match::new(l, filepath, blobstart + start, local, Function, &first_line(blob)))
+            Some(Match::new(l, filepath, blobstart + start, local, Function, first_line(blob)))
         } else {
             None
         }
