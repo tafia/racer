@@ -207,26 +207,27 @@ impl<'a> Iterator for ImplIter<'a> {
 }
 
 // scope headers include fn decls, if let, while let etc..
-fn search_scope_headers(point: usize, scopestart: usize, msrc: &str, searchstr: &str,
-                        filepath: &Path, search_type: SearchType,
-                        local: bool) -> vec::IntoIter<Match> {
-    debug!("search_scope_headers for |{}| pt: {}", searchstr, scopestart);
+fn search_scope_headers(m: &Match, scopestart: usize, search_type: SearchType)     
+    -> vec::IntoIter<Match> {
 
-    scopes::find_stmt_start(msrc, scopestart).map_or(Vec::new().into_iter(), |stmtstart| {
+    debug!("search_scope_headers for |{}| pt: {}", m.matchstr, scopestart);
 
-        let preblock = &msrc[stmtstart..scopestart];
+    scopes::find_stmt_start(&&*m.src, scopestart).map_or(Vec::new().into_iter(), |stmtstart| {
+
+        let preblock = &m.src[stmtstart..scopestart];
         debug!("PHIL search_scope_headers preblock is |{}|", preblock);
 
         if preblock.starts_with("fn") || preblock.starts_with("pub fn") {
-            return search_fn_args(stmtstart, scopestart, msrc, searchstr, filepath, search_type, local);
+            return search_fn_args(stmtstart, scopestart, &&*m.src, &m.matchstr, 
+                                  &m.filepath, search_type, m.local);
 
         // 'if let' can be an expression, so might not be at the start of the stmt
         } else if let Some(n) = preblock.find("if let") {
             let ifletstart = stmtstart + n;
-            let s = (&msrc[ifletstart..scopestart+1]).to_string() + "}";
-            if txt_matches(search_type, searchstr, &*s) {
-                let mut out = matchers::match_if_let(&*s, 0, s.len(), searchstr,
-                                                     filepath, search_type, local);
+            let s = (&m.src[ifletstart..scopestart+1]).to_string() + "}";
+            if txt_matches(search_type, &m.matchstr, &*s) {
+                let mut out = matchers::match_if_let(&*s, 0, s.len(), &m.matchstr,
+                                                     &m.filepath, search_type, m.local);
                 for m in out.iter_mut() {
                     m.point += ifletstart;
                 }
@@ -235,7 +236,7 @@ fn search_scope_headers(point: usize, scopestart: usize, msrc: &str, searchstr: 
         } else if let Some(n) = util::find_last_str("match ", preblock) {
             // TODO: this code is crufty. refactor me!
             let matchstart = stmtstart + n;
-            let matchstmt = typeinf::get_first_stmt(&msrc[matchstart..]);
+            let matchstmt = typeinf::get_first_stmt(&m.src[matchstart..]);
             // The definition could be in the match LHS arms. Try to find this
             debug!("PHIL found a match statement, examining match arms (len {}) |{}|",
                    matchstmt.len(), matchstmt);
@@ -247,8 +248,8 @@ fn search_scope_headers(point: usize, scopestart: usize, msrc: &str, searchstr: 
             let mut rhs = &*masked_matchstmt;
             let mut arm = 0;
             while let Some(n) = rhs.find("=>") {
-                debug!("PHIL match arm n is {}, {}, {}, {}", arm, n, matchstart, point);
-                if arm + n + matchstart > point {
+                debug!("PHIL match arm n is {}, {}, {}, {}", arm, n, matchstart, m.point);
+                if arm + n + matchstart > m.point {
                     break;
                 } else {
                     arm += n + 2;
@@ -257,11 +258,11 @@ fn search_scope_headers(point: usize, scopestart: usize, msrc: &str, searchstr: 
             }
             debug!("PHIL matched arm rhs is |{}|", &masked_matchstmt[arm-2..]);
 
-            let lhs_start = scopes::get_start_of_pattern(msrc, matchstart + arm - 2);
-            let lhs = &msrc[lhs_start..matchstart + arm - 2];
+            let lhs_start = scopes::get_start_of_pattern(&&*m.src, matchstart + arm - 2);
+            let lhs = &m.src[lhs_start..matchstart + arm - 2];
 
             // Now create a pretend match expression with just the one match arm in it
-            let mut fauxmatchstmt = (&msrc[matchstart..scopestart]).to_string();
+            let mut fauxmatchstmt = (&m.src[matchstart..scopestart]).to_string();
             fauxmatchstmt = fauxmatchstmt + "{";
             let faux_prefix_size = fauxmatchstmt.len();
             fauxmatchstmt = fauxmatchstmt + lhs + " => () };";
@@ -272,10 +273,15 @@ fn search_scope_headers(point: usize, scopestart: usize, msrc: &str, searchstr: 
             .into_iter().filter_map(|(start,end)| {
                 let (start, end) = (lhs_start + start - faux_prefix_size,
                                    lhs_start + end - faux_prefix_size);
-                let s = &msrc[start..end];
+                let s = &m.src[start..end];
 
-                if symbol_matches(search_type, searchstr, s) {
-                    Some(Match::new(s, filepath, start, local, MatchArm, lhs.trim()))
+                if symbol_matches(search_type, &m.matchstr, s) {
+                    let mut m = m.clone();
+                    m.matchstr = s.to_string();
+                    m.point = start;
+                    m.mtype = MatchArm;
+                    m.contextstr = lhs.trim().to_string();
+                    Some(m)
                 } else {
                     None
                 }
@@ -487,38 +493,6 @@ pub fn get_module_file(name: &str, parentdir: &Path) -> Option<PathBuf> {
     None
 }
 
-// struct ScopeIter<'a> {
-//     m: &'a Match,
-//     state: IterState<'a>,
-//     namespace: Namespace,
-//     search_type: SearchType
-// }
-
-// impl<'a> ScopeIter<'a> {
-//     fn new(m: &Match, search_type: SearchType, namespace: Namespace) {
-//         ScopeIter {
-//             m: m,
-//             state: IterState::Uninitialized,
-//             namespace: namespace,
-//             search_type: search_type
-//         }
-//     }
-// }
-
-// impl<'a> Iterator for MethodIter<'a> {
-//     type Item=Match;
-
-//     fn next(&mut self) -> Option<Match> {
-//         loop {
-//             match self.state {
-//                 IterState::Uninitialized => {
-
-//                 }
-//             }
-//         }
-//     }
-// }
-
 fn search_scope(m: &Match, start: usize,  search_type: SearchType, namespace: Namespace) 
         -> vec::IntoIter<Match> {
 
@@ -703,8 +677,7 @@ fn search_local_scopes(m: &mut Match, search_type: SearchType, namespace: Namesp
             start -= 1;
 
             // scope headers = fn decls, if let, match, etc..
-            scopes = search_scope_headers(m.point, start, &&*m.src, &m.matchstr, &*m.filepath, 
-                                          search_type, m.local);
+            scopes = search_scope_headers(&m, start, search_type);
             match search_type {
                 ExactMatch => {
                     if let Some(m) = scopes.next() {
