@@ -218,8 +218,7 @@ fn search_scope_headers(m: &Match, scopestart: usize, search_type: SearchType)
         debug!("PHIL search_scope_headers preblock is |{}|", preblock);
 
         if preblock.starts_with("fn") || preblock.starts_with("pub fn") {
-            return search_fn_args(stmtstart, scopestart, &&*m.src, &m.matchstr, 
-                                  &m.filepath, search_type, m.local);
+            return search_fn_args(m, stmtstart, scopestart, search_type);
 
         // 'if let' can be an expression, so might not be at the start of the stmt
         } else if let Some(n) = preblock.find("if let") {
@@ -312,22 +311,27 @@ fn does_it() {
     debug!("PHIL res is |{}|",res);
 }
 
-fn search_fn_args(fnstart: usize, open_brace_pos: usize, msrc:&str, searchstr:&str,
-                   filepath:&Path,
-                   search_type: SearchType, local: bool) -> vec::IntoIter<Match> {
+fn search_fn_args(m: &Match, fnstart: usize, open_brace_pos: usize, search_type: SearchType) 
+        -> vec::IntoIter<Match> {
+
     let mut fndecl = String::new();
     // wrap in 'impl blah {}' so that methods get parsed correctly too
     fndecl.push_str("impl blah {");
     let impl_header_len = fndecl.len();
-    fndecl.push_str(&msrc[fnstart..(open_brace_pos + 1)]);
+    fndecl.push_str(&m.src[fnstart..(open_brace_pos + 1)]);
     fndecl.push_str("}}");
-    debug!("search_fn_args: found start of fn!! {} |{}| {}", fnstart, fndecl, searchstr);
-    if txt_matches(search_type, searchstr, &fndecl) {
+    debug!("search_fn_args: found start of fn!! {} |{}| {}", fnstart, fndecl, &m.matchstr);
+    if txt_matches(search_type, &m.matchstr, &fndecl) {
         ast::parse_fn_args(fndecl.clone()).into_iter().filter_map(|(start, end)| {
             let s = &fndecl[start..end];
             debug!("search_fn_args: arg str is |{}|", s);
-            if symbol_matches(search_type, searchstr, s) {
-                Some(Match::new(s, filepath, start + fnstart - impl_header_len, local, FnArg, s))
+            if symbol_matches(search_type, &m.matchstr, s) {
+                let mut m = m.clone();
+                m.mtype = FnArg;
+                m.point = start + fnstart - impl_header_len;
+                m.matchstr = s.to_string();
+                m.contextstr = s.to_string();
+                Some(m)
             } else {
                 None
             }
