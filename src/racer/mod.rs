@@ -36,7 +36,8 @@ pub enum MatchType {
     FnArg,
     Trait,
     Const,
-    Static
+    Static,
+    Undef
 }
 
 #[derive(Debug,Copy,Clone)]
@@ -81,6 +82,26 @@ impl Match {
     {
         let path = path.into();
         let src = Rc::new(Box::new(load_file(&path)));
+        Match {
+            matchstr: matchstr.into(),
+            filepath: Rc::new(path),
+            src: src,
+            point: point,
+            local: local,
+            mtype: mtype,
+            contextstr: context.into(),
+            generic_args: Vec::new(),
+            generic_types: Vec::new()
+        }
+    }
+    fn no_comments<SM, SC, P>(matchstr: SM, path: P, point: usize, local: bool, 
+                      mtype: MatchType, context: SC) -> Match 
+        where SM: Into<String>,
+              SC: Into<String>,
+              P: Into<path::PathBuf> 
+    {
+        let path = path.into();
+        let src = Rc::new(Box::new(load_file_and_mask_comments(&path)));
         Match {
             matchstr: matchstr.into(),
             filepath: Rc::new(path),
