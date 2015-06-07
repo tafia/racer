@@ -283,7 +283,8 @@ fn search_expressions(expr: &str, filepath: &path::Path, pos: usize, search_type
             context.map_or(Vec::new().into_iter(), |ty| {
                 // for now, just handle matches
                 if let Ty::TyMatch(m) = ty {
-                    nameres::search_for_field_or_method(m, searchstr, search_type)
+                    nameres::search_for_field_or_method(&m, searchstr, search_type)
+                    .collect::<Vec<_>>().into_iter()
                 } else {
                     Vec::new().into_iter()
                 }

@@ -42,69 +42,104 @@ pub fn search_for_impl_methods<'a>(m: &'a Match, fieldsearchstr: &'a str,
     debug!("searching for impl methods |{}| |{}| {:?}", 
            m.matchstr, fieldsearchstr, m.filepath.to_str());
 
+    // return a box iterator
+    // must collect all methods (probably cheap enough) to workaround lifetime issues
     Box::new(ImplIter::new(m, true)
-        .filter_map(move |m| search_scope_for_methods(&m, fieldsearchstr, search_type))
-        .flat_map(|ms| ms.into_iter()))
+        .flat_map(move |m| MethodIter::new(&m, fieldsearchstr, search_type)
+            .collect::<Vec<_>>().into_iter()))
 }
 
-fn search_scope_for_methods(m: &Match, searchstr:&str, search_type: SearchType)     
-        -> Option<Vec<Match>> {
+enum IterState<'a> {
+    Uninitialized,
+    Iterating(usize, codeiter::StmtIndicesIter<'a>),
 
-    m.src[m.point..].find('{').map(move |n| {
-        let point = m.point + n + 1;
-        debug!("searching scope for methods {} |{}| {:?}", point, searchstr, m.filepath);
-        let src = &m.src[point..];
-        codeiter::iter_stmts(src).filter_map(move |(blobstart,blobend)| {
+}
 
-            let blob = &src[blobstart..blobend];
-            let searchfn = format!("fn {}", searchstr);
-            if txt_matches(search_type, &searchfn, blob)
-                && typeinf::first_param_is_self(blob) {
+struct MethodIter<'a> {
+    m: &'a Match,
+    state: IterState<'a>,
+    searchfn: String,
+    search_type: SearchType
+}
 
-                debug!("found a method starting |{}| |{}|", searchstr, blob);
+impl<'a> MethodIter<'a> {
+    fn new(m: &'a Match, searchstr: &str, search_type: SearchType) -> MethodIter<'a> {
+        MethodIter { 
+            m: m, 
+            state: IterState::Uninitialized, 
+            searchfn: format!("fn {}", searchstr), 
+            search_type: search_type 
+        }
+    }
+}
 
-                // TODO: parse this properly
-                let start = blob.find(&searchfn).unwrap() + 3;
-                let end = find_ident_end(blob, start);
-                let l = &blob[start..end];
+impl<'a> Iterator for MethodIter<'a> {
+    type Item=Match;
 
-                // TODO: make a better context string for functions
-                // only matches if is a method implementation
-                blob.find('{').map(|n| {
-                    let mut m = m.clone();
-                    m.matchstr = l.to_string();
-                    m.point = point + blobstart + start;
-                    m.local = true;
-                    m.mtype = Function;
-                    m.contextstr = blob[..n -1].to_owned();
-                    m
-                })
-            } else {
-                None
+    fn next(&mut self) -> Option<Match> {
+        loop {
+            match self.state {
+                IterState::Uninitialized => {
+                    if let Some(n) = self.m.src[self.m.point..].find('{') {
+                        let point = self.m.point + n + 1;
+                        debug!("searching scope for methods {} |{}| {:?}", 
+                            point, self.searchfn, self.m.filepath);
+                        let src = &self.m.src[point..];
+                        self.state = IterState::Iterating(point, codeiter::iter_stmts(src));
+                    } else {
+                        return None;
+                    }
+                },
+                IterState::Iterating(point, ref mut iter) => {
+                    loop {
+                        if let Some((blobstart,blobend)) = iter.next() {
+                            let blob = &self.m.src[point+blobstart..point+blobend];
+                            if txt_matches(self.search_type, &self.searchfn, blob)
+                                && typeinf::first_param_is_self(blob) {
+
+                                debug!("found a method starting |{}| |{}|", self.searchfn, blob);
+
+                                // TODO: parse this properly
+                                let start = blob.find(&self.searchfn).unwrap() + 3;
+                                let end = find_ident_end(blob, start);
+                                let l = &blob[start..end];
+
+                                // TODO: make a better context string for functions
+                                // only matches if is a method implementation
+                                if let Some(n) = blob.find('{') {
+                                    let mut m = self.m.clone();
+                                    m.matchstr = l.to_string();
+                                    m.point = point + blobstart + start;
+                                    m.local = true;
+                                    m.mtype = Function;
+                                    m.contextstr = blob[..n -1].to_owned();
+                                    return Some(m);
+                                }
+                            }
+                        } else {
+                            return None;
+                        }
+                    }
+                }
             }
-        }).collect() // couldn't make it work with Box ... lifetimes issues
-    })
+        }
+    }
 }
 
 struct ImplIter<'a> {
     m: &'a Match,
-    iter: codeiter::StmtIndicesIter<'a>,
-    state: u8,
+    state: IterState<'a>,
     include_traits: bool,
     trait_path: Option<racer::Path>,
-    start: usize
 }
 
 impl<'a> ImplIter<'a> {
     fn new(m: &'a Match, include_traits:bool) -> ImplIter<'a> {
-        let iter = codeiter::iter_stmts(&m.src[m.point..]);
         ImplIter { 
-            m:m, 
-            iter: iter, 
-            state: 0, 
+            m:m,
+            state: IterState::Uninitialized, 
             include_traits: include_traits, 
             trait_path: None,
-            start: 0
         }
     }
 }
@@ -113,13 +148,15 @@ impl<'a> Iterator for ImplIter<'a> {
     type Item=Match;
 
     fn next(&mut self) -> Option<Match> {
-
         loop {
-
             match self.state {
+                IterState::Uninitialized => {
+                    self.state = IterState::Iterating(0, 
+                        codeiter::iter_stmts(&self.m.src[self.m.point..]))
+                }
                 // must iterate on code
-                0 => {
-                    if let Some((start, end)) = self.iter.next() {
+                IterState::Iterating(ref mut pos, ref mut iter) if *pos == 0 => {
+                    if let Some((start, end)) = iter.next() {
                         let blob = &self.m.src[start+self.m.point..end+self.m.point];
                         if blob.starts_with("impl") {
                             if let Some(n) = blob.find('{') {
@@ -131,9 +168,8 @@ impl<'a> Iterator for ImplIter<'a> {
                                     let implres = ast::parse_impl(decl);
 
                                     if self.include_traits { 
-                                        self.trait_path = implres.trait_path; 
-                                        self.start = start;
-                                        self.state = 1;
+                                        self.trait_path = implres.trait_path;
+                                        *pos = self.m.point + start;
                                     }
 
                                     if let Some(name_path) = implres.name_path {
@@ -149,25 +185,22 @@ impl<'a> Iterator for ImplIter<'a> {
                                 }
                             }
                         }
-                    } else { self.state = 2; }
-                }
-                // must try for traits
-                1 => {
-                    self.state = 0;
-                    if self.include_traits {
-                        if let Some(ref trait_path) = self.trait_path {
-                            let m = resolve_path(&trait_path, &*self.m.filepath, 
-                                                 self.m.point + self.start, ExactMatch, 
-                                                 TypeNamespace).next();
-                            if m.is_some() { 
-                                debug!("found trait |{:?}| {:?}", trait_path, m);
-                                return m;
-                            }
-                        }
+                    } else { 
+                        return None;
                     }
                 }
-                // finished
-                _ => return None,
+                IterState::Iterating(ref mut pos, _) => {
+                    if let Some(ref trait_path) = self.trait_path {
+                        if let Some(m) = resolve_path(&trait_path, &*self.m.filepath, 
+                                            *pos, ExactMatch, 
+                                            TypeNamespace).next() {
+                            debug!("found trait |{:?}| {:?}", trait_path, m);
+                            *pos = 0;
+                            return Some(m);
+                        }
+                    }
+                    *pos = 0;
+                }
             }
         }
     }
@@ -916,28 +949,31 @@ pub fn do_external_search(path: &[&str], filepath: &Path, pos: usize,
     }
 }
 
-pub fn search_for_field_or_method(context: Match, searchstr: &str, search_type: SearchType) 
-        -> vec::IntoIter<Match> {
+pub fn search_for_field_or_method<'a>(context: &'a Match, searchstr: &'a str, 
+                                      search_type: SearchType) 
+        -> Box<Iterator<Item=Match> + 'a> {
     let m = context;
     match m.mtype {
         Struct => {
             debug!("got a struct, looking for fields and impl methods!! {}", m.matchstr);
-            search_struct_fields(searchstr, &m, search_type)
-            .chain(search_for_impl_methods(&m, searchstr, search_type))
-            .collect::<Vec<_>>()
+            Box::new(search_struct_fields(searchstr, &m, search_type)
+            .chain(search_for_impl_methods(&m, searchstr, search_type))) 
+            as Box<Iterator<Item=Match> + 'a>
         },
         Enum => {
             debug!("got an enum, looking for impl methods {}", m.matchstr);
-            search_for_impl_methods(&m,searchstr, search_type).collect::<Vec<_>>()
+            Box::new(search_for_impl_methods(&m,searchstr, search_type)) 
+            as Box<Iterator<Item=Match> + 'a>
         },
         Trait => {
             debug!("got a trait, looking for methods {}", m.matchstr);
-            search_scope_for_methods(&m, searchstr, search_type)
-            .map_or(Vec::new(), |m| m)
+            // search_scope_for_methods(&m, searchstr, search_type)
+            Box::new(MethodIter::new(&m, searchstr, search_type)) 
+            as Box<Iterator<Item=Match> + 'a>
         }
         _ => { 
             debug!("WARN!! context wasn't a Struct, Enum or Trait {:?}",m);
-            Vec::new()
+            Box::new(Vec::<Match>::new().into_iter()) as Box<Iterator<Item=Match> + 'a>
         }
-    }.into_iter()
+    }
 }
