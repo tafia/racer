@@ -487,8 +487,40 @@ pub fn get_module_file(name: &str, parentdir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn search_scope(m: &Match, start: usize, 
-                search_type: SearchType, namespace: Namespace) -> vec::IntoIter<Match> {
+// struct ScopeIter<'a> {
+//     m: &'a Match,
+//     state: IterState<'a>,
+//     namespace: Namespace,
+//     search_type: SearchType
+// }
+
+// impl<'a> ScopeIter<'a> {
+//     fn new(m: &Match, search_type: SearchType, namespace: Namespace) {
+//         ScopeIter {
+//             m: m,
+//             state: IterState::Uninitialized,
+//             namespace: namespace,
+//             search_type: search_type
+//         }
+//     }
+// }
+
+// impl<'a> Iterator for MethodIter<'a> {
+//     type Item=Match;
+
+//     fn next(&mut self) -> Option<Match> {
+//         loop {
+//             match self.state {
+//                 IterState::Uninitialized => {
+
+//                 }
+//             }
+//         }
+//     }
+// }
+
+fn search_scope(m: &Match, start: usize,  search_type: SearchType, namespace: Namespace) 
+        -> vec::IntoIter<Match> {
 
     let mut out = Vec::new();
 
@@ -606,43 +638,37 @@ fn search_scope(m: &Match, start: usize,
     out.into_iter()
 }
 
-fn run_matchers_on_blob(src: &str, start: usize, end: usize, searchstr: &str,
-                         filepath: &Path, search_type: SearchType, local: bool,
-                         namespace: Namespace) -> Vec<Match> {
+fn run_matchers_on_blob<'a>(src: &'a str, start: usize, end: usize, searchstr: &'a str,
+                            filepath: &'a Path, search_type: SearchType, local: bool,
+                            namespace: Namespace) -> Box<Iterator<Item=Match> + 'a> {
 
-    match namespace {
+    let mut iter = match namespace {
         TypeNamespace => {
-            let mut ms = matchers::match_types(src, start, end, searchstr,
-                                               filepath, search_type, local);
-            match search_type {
-                ExactMatch => ms.next().map_or(Vec::new(), |m| vec![m]),
-                StartsWith => ms.collect::<Vec<_>>()
-            }            
+            Box::new(matchers::match_types(src, start, end, searchstr, 
+                                           filepath, search_type, local))
+            as Box<Iterator<Item=Match> + 'a>
         },
         ValueNamespace => {
-            let mut ms = matchers::match_values(src, start, end, searchstr,
-                                                filepath, search_type, local);
-            match search_type {
-                ExactMatch => ms.next().map_or(Vec::new(), |m| vec![m]),
-                StartsWith => ms.collect::<Vec<_>>()
-            }
+            Box::new(matchers::match_values(src, start, end, searchstr, 
+                                            filepath, search_type, local))
+            as Box<Iterator<Item=Match> + 'a>
         },
         BothNamespaces => {
-            let mut ms = matchers::match_types(src, start, end, searchstr,
-                                               filepath, search_type, local)
+            Box::new(matchers::match_types(src, start, end, searchstr, 
+                                           filepath, search_type, local)
                      .chain(matchers::match_values(src, start, end, searchstr,
-                                                   filepath, search_type, local));
-            match search_type {
-                ExactMatch => ms.next().map_or(Vec::new(), |m| vec![m]),
-                StartsWith => ms.collect::<Vec<_>>()
-            }
+                                                   filepath, search_type, local)))
+            as Box<Iterator<Item=Match> + 'a>
         }
+    };
+
+    match search_type {
+        ExactMatch => Box::new(iter.next().map_or(Vec::new(), |m| vec![m]).into_iter())
+            as Box<Iterator<Item=Match> + 'a>,
+        StartsWith => iter
     }
 }
 
-// fn search_local_scopes( pathseg: &racer::PathSegment, filepath: &Path,
-//                        msrc: &str, point: usize, search_type: SearchType,
-//                        namespace: Namespace) -> vec::IntoIter<Match> {
 fn search_local_scopes(m: &mut Match, search_type: SearchType, namespace: Namespace) 
         -> vec::IntoIter<Match> {
 
@@ -913,7 +939,6 @@ pub fn do_external_search(path: &[&str], filepath: &Path, pos: usize,
 
         // hack for now
         // let pathseg = racer::PathSegment::new(searchstr);
-
         let mut out = search_next_scope(&mut m, search_type, namespace).collect::<Vec<_>>();
 
         get_module_file(searchstr, &filepath.parent().unwrap()).map(|path| {
